@@ -67,7 +67,6 @@
 //		"glob" pattern and N is a V level. For instance,
 //			-vmodule=gopher*=3
 //		sets the V level to 3 in all Go files whose names begin "gopher".
-//
 package glog
 
 import (
@@ -423,6 +422,8 @@ type loggingT struct {
 	toStderr     bool // The -logtostderr flag.
 	alsoToStderr bool // The -alsologtostderr flag.
 
+	logPanicToErr bool // 输出panic日志到error
+
 	// Level flag. Handled atomically.
 	stderrThreshold severity // The -stderrthreshold flag.
 
@@ -521,8 +522,11 @@ It returns a buffer containing the formatted header and the user's file and line
 The depth specifies how many stack frames above lives the source line to be identified in the log message.
 
 Log lines have this form:
+
 	Lmmdd hh:mm:ss.uuuuuu threadid file:line] msg...
+
 where the fields are defined as follows:
+
 	L                A single character, representing the log level (eg 'I' for INFO)
 	mm               The month (zero padded; ie May is '05')
 	dd               The day (zero padded)
@@ -682,7 +686,7 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 	} else if l.toStderr {
 		os.Stderr.Write(data)
 	} else {
-		if alsoToStderr || l.alsoToStderr || s >= l.stderrThreshold.get() {
+		if !l.logPanicToErr && (alsoToStderr || l.alsoToStderr || s >= l.stderrThreshold.get()) {
 			os.Stderr.Write(data)
 		}
 		if l.file[s] == nil {
@@ -694,13 +698,13 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		switch s {
 		case fatalLog:
 			l.file[fatalLog].Write(data)
-			fallthrough
+			//fallthrough
 		case errorLog:
 			l.file[errorLog].Write(data)
-			fallthrough
+			//fallthrough
 		case warningLog:
 			l.file[warningLog].Write(data)
-			fallthrough
+			//fallthrough
 		case infoLog:
 			l.file[infoLog].Write(data)
 		}
@@ -836,6 +840,13 @@ func (sb *syncBuffer) rotateFile(now time.Time) error {
 	sb.nbytes = 0
 	if err != nil {
 		return err
+	}
+
+	if logging.logPanicToErr && sb.sev == errorLog {
+		err = redirectStderr(sb.file)
+		if err != nil {
+			return err
+		}
 	}
 
 	sb.Writer = bufio.NewWriterSize(sb.file, bufferSize)
@@ -986,9 +997,13 @@ type Verbose bool
 // The returned value is a boolean of type Verbose, which implements Info, Infoln
 // and Infof. These methods will write to the Info log if called.
 // Thus, one may write either
+//
 //	if glog.V(2) { glog.Info("log this") }
+//
 // or
+//
 //	glog.V(2).Info("log this")
+//
 // The second form is shorter but the first is cheaper if logging is off because it does
 // not evaluate its arguments.
 //
@@ -1177,4 +1192,9 @@ func Exitln(args ...interface{}) {
 func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
+}
+
+func SetPanicLog2ErrFile() {
+	logging.logPanicToErr = true
+	Errorln("open err file")
 }
